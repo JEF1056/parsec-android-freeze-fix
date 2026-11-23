@@ -24,7 +24,8 @@ import sys
 ADDR_DECODE_FRAME = 0x16B830
 ADDR_DEQUEUE_IN_CALL = 0x16B888
 ADDR_DEQUEUE_IN_PLT = 0x22F570
-ADDR_DEQUEUE_OUT_LOOP = 0x16B8EC
+# Loop back to ldr x0, [x19] (0x16B8E8), NOT 0x16B8EC, because x0 holds -2/-3 after dequeueOutputBuffer
+ADDR_DEQUEUE_OUT_LOOP = 0x16B8E8
 ADDR_DEQUEUE_OUT_CHK = 0x16B904
 ADDR_DEQUEUE_OUT_OK = 0x16B908
 ADDR_DEQUEUE_OUT_SKIP = 0x16B9A4
@@ -80,7 +81,7 @@ def build_cave(cave_vaddr: int):
 
     # --- cave_dequeue_input ---
     insns.append(0xA9BF7BF9)  # stp x25, x30, [sp, #-16]!
-    insns.append(0x52800299)  # mov w25, #0x14 (20 retries * 5ms = 100ms)
+    insns.append(0x52800519)  # mov w25, #0x28 (40 retries * 5ms = 200ms)
 
     loop_pc = pc()
     insns.append(0xF9400260)  # ldr x0, [x19] (ctx->codec)

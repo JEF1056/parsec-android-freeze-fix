@@ -15,8 +15,9 @@ When Codec2 output buffers back up in `AidlBufferPool` (e.g. all 6 buffers stuck
 
 `patch_parsec.py` adds a 16 KB-aligned `r-x` `PT_LOAD` code cave (repurposing `PT_NOTE`) to `libmain.so`:
 
-- Replaces `AMediaCodec_dequeueInputBuffer(codec, -1)` (`0x16b888`) with a bounded 5 ms poll (up to 20 retries) that drains and delivers backed-up output frames via `decode_frame(ctx, NULL, 0, out_cb, out_status)` whenever `INFO_TRY_AGAIN_LATER` (`-1`) occurs.
-- Loops `AMediaCodec_dequeueOutputBuffer` (`0x16b904`) on `INFO_OUTPUT_FORMAT_CHANGED` (`-2`) and `INFO_OUTPUT_BUFFERS_CHANGED` (`-3`) instead of skipping the frame.
+- Replaces `AMediaCodec_dequeueInputBuffer(codec, -1)` (`0x16b888`) with a bounded 5 ms poll (up to 40 retries = 200 ms) that drains and delivers backed-up output frames via `decode_frame(ctx, NULL, 0, out_cb, out_status)` whenever `INFO_TRY_AGAIN_LATER` (`-1`) occurs.
+- Loops `AMediaCodec_dequeueOutputBuffer` (`0x16b904` -> `0x16b8e8`, reloading `codec` into `x0`) on `INFO_OUTPUT_FORMAT_CHANGED` (`-2`) and `INFO_OUTPUT_BUFFERS_CHANGED` (`-3`) instead of skipping the frame.
+- (Optional, when `apktool` + Pillow are installed) Updates `base.apk`'s launcher icon to modern Android adaptive + monochrome specs (`mipmap-anydpi-v26/ic_launcher.xml` and `ic_launcher_round.xml` with 432×432 foreground/background/monochrome layers), removing the legacy white border on Pixel Launcher and adding Android 13+ themed/grayscale icon support.
 
 ## Usage
 
