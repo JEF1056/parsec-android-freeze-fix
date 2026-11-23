@@ -1,0 +1,137 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark release as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install Pillow
+
+      - name: Install Apktool & configure Android build tools
+        run: |
+          sudo curl -sLo /usr/local/bin/apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
+          sudo curl -sLo /usr/local/bin/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+          sudo chmod +x /usr/local/bin/apktool /usr/local/bin/apktool.jar
+
+          # Locate highest version of Android build-tools on runner
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          echo "Using Android build-tools from: $BUILD_TOOLS_DIR"
+          echo "$BUILD_TOOLS_DIR" >> $GITHUB_PATH
+
+      - name: Cache original Parsec XAPK
+        uses: actions/cache@v4
+        id: cache-parsec-xapk
+        with:
+          path: build/parsec.xapk
+          key: parsec-xapk-3.150.097.05
+
+      - name: Setup custom keystore if provided
+        id: keystore
+        run: |
+          mkdir -p build
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "Decoding release keystore from secrets..."
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > build/custom.keystore
+            echo "KEYSTORE_ARG=--keystore build/custom.keystore --storepass ${{ secrets.RELEASE_KEYSTORE_PASSWORD || 'android' }} --keypass ${{ secrets.RELEASE_KEY_PASSWORD || 'android' }} --key-alias ${{ secrets.RELEASE_KEY_ALIAS || 'parsec-release' }}" >> $GITHUB_OUTPUT
+          else
+            echo "Using auto-generated release keystore..."
+            echo "KEYSTORE_ARG=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and package patched APK
+        run: |
+          python3 build.py --work-dir build --dist-dir dist ${{ steps.keystore.outputs.KEYSTORE_ARG }}
+
+      - name: Generate Release Notes and Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v3.150.097.05-build.${{ github.run_number }}"
+          RELEASE_TITLE="Parsec 3.150.097.05 - Android Freeze Fix (Build ${{ github.run_number }})"
+
+          cat << 'EOF' > release_body.md
+          ## Parsec Android Video Freeze Fix (3.150.097.05)
+
+          Production-optimized, 16 KB-aligned, ready-to-install Android APK with the native `AMediaCodec` video freeze deadlock patch.
+
+          ### What's Fixed & Included
+          - **AMediaCodec Buffer Deadlock Fix:** Eliminates the video stream freeze occurring after format changes or brief decode latency spikes on Android Codec2 devices.
+          - **Standalone 1-Tap APK:** Native libraries and base APK merged into a single standalone `.apk`—install directly on your phone, tablet, TV, or Meta Quest without needing `adb install-multiple` or split APK installers.
+          - **Android 15+ 16 KB Page Support:** ELF code cave and uncompressed native libraries (`extractNativeLibs="false"`) are strictly aligned to 16 KB page boundaries (`zipalign -P 16 -f 4`).
+          - **Modern Launcher Icons:** High-resolution adaptive (foreground + solid background) and Android 13+ monochrome themed icons (no legacy white border on Pixel Launcher).
+          - **Production Signed:** Signed with APK Signature Schemes v1, v2, and v3.
+
+          ### Installation
+          1. Download **`parsec-3.150.097.05-arm64-freeze-fix.apk`** below directly onto your Android device.
+          2. Tap the downloaded file to install (enable "Install unknown apps" in Android Settings if prompted).
+             *(Note: Because this is signed with a release community key, you must uninstall the official Play Store version first if previously installed).*
+          3. Open Parsec, sign in, and enjoy freeze-free streaming!
+
+          ### Assets & Verification
+          - **`parsec-3.150.097.05-arm64-freeze-fix.apk`**: Single standalone installable APK.
+          - **`parsec-3.150.097.05-arm64-splits.zip`**: Split APKs bundle for `adb install-multiple` or SAI.
+          - **`libmain_patched.so`**: Standalone patched arm64-v8a native library.
+
+          ### Checksums (SHA-256)
+          ```
+          EOF
+          cat dist/SHA256SUMS.txt >> release_body.md
+          cat << 'EOF' >> release_body.md
+          ```
+          EOF
+
+          PRERELEASE_FLAG=""
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$TAG_NAME" \
+            dist/parsec-3.150.097.05-arm64-freeze-fix.apk \
+            dist/parsec-3.150.097.05-arm64-freeze-fix.apk.sha256 \
+            dist/parsec-3.150.097.05-arm64-splits.zip \
+            dist/parsec-3.150.097.05-arm64-splits.zip.sha256 \
+            dist/libmain_patched.so \
+            dist/SHA256SUMS.txt \
+            --title "$RELEASE_TITLE" \
+            --notes-file release_body.md \
+            $PRERELEASE_FLAG

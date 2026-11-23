@@ -1,5 +1,12 @@
 work/
+build/
+dist/
+release_body.md
 *.apk
+*.xapk
 *.so
 *.keystore
 *.bin
+*.idsig
+*.sha256
+SHA256SUMS.txt
