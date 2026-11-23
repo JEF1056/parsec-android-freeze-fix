@@ -38,25 +38,37 @@ def align_up(val: int, align: int) -> int:
 
 
 def enc_b(pc: int, target: int) -> int:
-    imm26 = ((target - pc) >> 2) & 0x03FFFFFF
-    return 0x14000000 | imm26
+    delta = target - pc
+    assert -0x08000000 <= delta < 0x08000000 and (delta & 3) == 0, f"b out of range: {delta:#x}"
+    return 0x14000000 | ((delta >> 2) & 0x03FFFFFF)
 
 
 def enc_bl(pc: int, target: int) -> int:
-    imm26 = ((target - pc) >> 2) & 0x03FFFFFF
-    return 0x94000000 | imm26
+    delta = target - pc
+    assert -0x08000000 <= delta < 0x08000000 and (delta & 3) == 0, f"bl out of range: {delta:#x}"
+    return 0x94000000 | ((delta >> 2) & 0x03FFFFFF)
 
 
 def enc_b_cond(pc: int, target: int, cond: int) -> int:
-    imm19 = ((target - pc) >> 2) & 0x7FFFF
-    return 0x54000000 | (imm19 << 5) | cond
+    delta = target - pc
+    assert -0x00100000 <= delta < 0x00100000 and (delta & 3) == 0, f"b.cond out of range: {delta:#x}"
+    return 0x54000000 | (((delta >> 2) & 0x7FFFF) << 5) | cond
 
 
 def enc_tbz(pc: int, target: int, reg: int, bit: int) -> int:
-    imm14 = ((target - pc) >> 2) & 0x3FFF
+    delta = target - pc
+    assert -0x8000 <= delta < 0x8000 and (delta & 3) == 0, f"tbz out of range: {delta:#x}"
     b5 = (bit >> 5) & 1
     b40 = bit & 0x1F
-    return (b5 << 31) | 0x36000000 | (b40 << 19) | (imm14 << 5) | reg
+    return (b5 << 31) | 0x36000000 | (b40 << 19) | (((delta >> 2) & 0x3FFF) << 5) | reg
+
+
+def enc_tbnz(pc: int, target: int, reg: int, bit: int) -> int:
+    delta = target - pc
+    assert -0x8000 <= delta < 0x8000 and (delta & 3) == 0, f"tbnz out of range: {delta:#x}"
+    b5 = (bit >> 5) & 1
+    b40 = bit & 0x1F
+    return (b5 << 31) | 0x37000000 | (b40 << 19) | (((delta >> 2) & 0x3FFF) << 5) | reg
 
 
 def build_cave(cave_vaddr: int):
@@ -105,12 +117,20 @@ def build_cave(cave_vaddr: int):
 
     # --- cave_check_output ---
     check_out_pc = pc()
-    insns.append(enc_tbz(pc(), ADDR_DEQUEUE_OUT_OK, 0, 63))
+    insns.append(enc_tbnz(pc(), pc() + 8, 0, 63))   # if x0 < 0, skip next
+    insns.append(enc_b(pc(), ADDR_DEQUEUE_OUT_OK))  # x0 >= 0 -> 0x16b908
     insns.append(0xB100081F)  # cmn x0, #2 (INFO_OUTPUT_FORMAT_CHANGED)
-    insns.append(enc_b_cond(pc(), ADDR_DEQUEUE_OUT_LOOP, 0))
+    beq_loop_idx = len(insns)
+    insns.append(0)
     insns.append(0xB1000C1F)  # cmn x0, #3 (INFO_OUTPUT_BUFFERS_CHANGED)
-    insns.append(enc_b_cond(pc(), ADDR_DEQUEUE_OUT_LOOP, 0))
+    bne_skip_idx = len(insns)
+    insns.append(0)
+    loop_jmp_pc = pc()
+    insns.append(enc_b(pc(), ADDR_DEQUEUE_OUT_LOOP))
+    skip_jmp_pc = pc()
     insns.append(enc_b(pc(), ADDR_DEQUEUE_OUT_SKIP))
+    insns[beq_loop_idx] = enc_b_cond(cave_vaddr + beq_loop_idx * 4, loop_jmp_pc, 0)
+    insns[bne_skip_idx] = enc_b_cond(cave_vaddr + bne_skip_idx * 4, skip_jmp_pc, 1)
 
     return b"".join(struct.pack("<I", i) for i in insns), cave_vaddr, check_out_pc
 
